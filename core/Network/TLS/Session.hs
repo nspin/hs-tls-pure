@@ -13,16 +13,16 @@ module Network.TLS.Session
 import Network.TLS.Types
 
 -- | A session manager
-data SessionManager = SessionManager
+data SessionManager m = SessionManager
     { -- | used on server side to decide whether to resume a client session.
-      sessionResume     :: SessionID -> IO (Maybe SessionData)
+      sessionResume     :: SessionID -> m (Maybe SessionData)
       -- | used when a session is established.
-    , sessionEstablish  :: SessionID -> SessionData -> IO ()
+    , sessionEstablish  :: SessionID -> SessionData -> m ()
       -- | used when a session is invalidated.
-    , sessionInvalidate :: SessionID -> IO ()
+    , sessionInvalidate :: SessionID -> m ()
     }
 
-noSessionManager :: SessionManager
+noSessionManager :: Monad m => SessionManager m
 noSessionManager = SessionManager
     { sessionResume     = \_   -> return Nothing
     , sessionEstablish  = \_ _ -> return ()

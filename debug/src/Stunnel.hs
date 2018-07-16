@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- Disable this warning so we can still test deprecated functionality.
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 
@@ -35,7 +36,7 @@ readOne h = do
         Right True  -> B.hGetNonBlocking h 4096
         Right False -> return B.empty
 
-tlsclient :: Handle -> Context -> IO ()
+tlsclient :: Handle -> Context IO -> IO ()
 tlsclient srchandle dsthandle = do
     hSetBuffering srchandle NoBuffering
 
@@ -90,7 +91,8 @@ clientProcess dhParamsFile creds handle dsthandle dbg sessionStorage _ = do
 
     let serverstate = def
             { serverSupported = def { supportedCiphers = ciphersuite_default }
-            , serverShared    = def { sharedCredentials = creds
+            , serverShared    = (def :: Shared IO)
+                                    { sharedCredentials = creds
                                     , sharedSessionManager = maybe noSessionManager (memSessionManager . MemSessionManager) sessionStorage
                                     }
             , serverDHEParams = dhParams

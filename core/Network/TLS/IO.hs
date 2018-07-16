@@ -22,19 +22,17 @@ import Network.TLS.Receiving
 import Network.TLS.Imports
 import qualified Data.ByteString as B
 
-import Data.IORef
-import Control.Monad.State.Strict
-import Control.Exception (throwIO)
+import Control.Monad.Catch (throwM, MonadThrow)
 import System.IO.Error (mkIOError, eofErrorType)
 
-checkValid :: Context -> IO ()
+checkValid :: MonadThrow m => Context m -> m ()
 checkValid ctx = do
     established <- ctxEstablished ctx
-    unless established $ throwIO ConnectionNotEstablished
+    unless established $ throwM ConnectionNotEstablished
     eofed <- ctxEOF ctx
-    when eofed $ throwIO $ mkIOError eofErrorType "data" Nothing Nothing
+    when eofed $ throwM $ mkIOError eofErrorType "data" Nothing Nothing
 
-readExact :: Context -> Int -> IO (Either TLSError ByteString)
+readExact :: Monad m => Context m -> Int -> m (Either TLSError ByteString)
 readExact ctx sz = do
     hdrbs <- contextRecv ctx sz
     if B.length hdrbs == sz
@@ -50,9 +48,10 @@ readExact ctx sz = do
 -- | recvRecord receive a full TLS record (header + data), from the other side.
 --
 -- The record is disengaged from the record layer
-recvRecord :: Bool    -- ^ flag to enable SSLv2 compat ClientHello reception
-           -> Context -- ^ TLS context
-           -> IO (Either TLSError (Record Plaintext))
+recvRecord :: MonadThrow m
+           => Bool      -- ^ flag to enable SSLv2 compat ClientHello reception
+           -> Context m -- ^ TLS context
+           -> m (Either TLSError (Record Plaintext))
 recvRecord compatSSLv2 ctx
 #ifdef SSLV2_COMPATIBLE
     | compatSSLv2 = readExact ctx 2 >>= either (return . Left) sslv2Header
@@ -83,17 +82,16 @@ recvRecord compatSSLv2 ctx
                         either (return . Left) (flip getRecord content) $ decodeDeprecatedHeader readlen content
 #endif
               maximumSizeExceeded = Error_Protocol ("record exceeding maximum size", True, RecordOverflow)
-              getRecord :: Header -> ByteString -> IO (Either TLSError (Record Plaintext))
               getRecord header content = do
-                    withLog ctx $ \logging -> loggingIORecv logging header content
+                    withLog ctx $ \logging -> loggingMRecv logging header content
                     runRxState ctx $ disengageRecord $ rawToRecord header (fragmentCiphertext content)
 
 
 -- | receive one packet from the context that contains 1 or
 -- many messages (many only in case of handshake). if will returns a
 -- TLSError if the packet is unexpected or malformed
-recvPacket :: MonadIO m => Context -> m (Either TLSError Packet)
-recvPacket ctx = liftIO $ do
+recvPacket :: MonadThrow m => Context m -> m (Either TLSError Packet)
+recvPacket ctx = do
     compatSSLv2 <- ctxHasSSLv2ClientHello ctx
     erecord     <- recvRecord compatSSLv2 ctx
     case erecord of
@@ -112,21 +110,21 @@ recvPacket ctx = liftIO $ do
             return pkt
 
 -- | Send one packet to the context
-sendPacket :: MonadIO m => Context -> Packet -> m ()
+sendPacket :: MonadThrow m => Context m -> Packet -> m ()
 sendPacket ctx pkt = do
     -- in ver <= TLS1.0, block ciphers using CBC are using CBC residue as IV, which can be guessed
     -- by an attacker. Hence, an empty packet is sent before a normal data packet, to
     -- prevent guessability.
-    withEmptyPacket <- liftIO $ readIORef $ ctxNeedEmptyPacket ctx
+    withEmptyPacket <- ctxNeedEmptyPacket ctx
     when (isNonNullAppData pkt && withEmptyPacket) $ sendPacket ctx $ AppData B.empty
 
-    edataToSend <- liftIO $ do
-                        withLog ctx $ \logging -> loggingPacketSent logging (show pkt)
-                        writePacket ctx pkt
+    edataToSend <- do
+        withLog ctx $ \logging -> loggingPacketSent logging (show pkt)
+        writePacket ctx pkt
     case edataToSend of
         Left err         -> throwCore err
-        Right dataToSend -> liftIO $ do
-            withLog ctx $ \logging -> loggingIOSent logging dataToSend
+        Right dataToSend -> do
+            withLog ctx $ \logging -> loggingMSent logging dataToSend
             contextSend ctx dataToSend
   where isNonNullAppData (AppData b) = not $ B.null b
         isNonNullAppData _           = False

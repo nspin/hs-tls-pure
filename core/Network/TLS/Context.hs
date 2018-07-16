@@ -1,4 +1,9 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 -- |
 -- Module      : Network.TLS.Context
 -- License     : BSD-style
@@ -76,8 +81,9 @@ import Network.TLS.X509
 import Network.TLS.RNG
 
 import Control.Concurrent.MVar
-import Control.Monad.State.Strict
+import Control.Monad.Catch (MonadCatch)
 import Data.IORef
+import Data.Tuple
 
 -- deprecated imports
 #ifdef INCLUDE_NETWORK
@@ -85,13 +91,13 @@ import Network.Socket (Socket)
 #endif
 import System.IO (Handle)
 
-class TLSParams a where
-    getTLSCommonParams :: a -> CommonParams
+class TLSParams m a | a -> m where
+    getTLSCommonParams :: a -> CommonParams m
     getTLSRole         :: a -> Role
-    doHandshake        :: a -> Context -> IO ()
-    doHandshakeWith    :: a -> Context -> Handshake -> IO ()
+    doHandshake        :: a -> Context m -> m ()
+    doHandshakeWith    :: a -> Context m -> Handshake -> m ()
 
-instance TLSParams ClientParams where
+instance MonadCatch m => TLSParams m (ClientParams m) where
     getTLSCommonParams cparams = ( clientSupported cparams
                                  , clientShared cparams
                                  , clientDebug cparams
@@ -100,7 +106,7 @@ instance TLSParams ClientParams where
     doHandshake = handshakeClient
     doHandshakeWith = handshakeClientWith
 
-instance TLSParams ServerParams where
+instance MonadCatch m => TLSParams m (ServerParams m) where
     getTLSCommonParams sparams = ( serverSupported sparams
                                  , serverShared sparams
                                  , serverDebug sparams
@@ -110,11 +116,11 @@ instance TLSParams ServerParams where
     doHandshakeWith = handshakeServerWith
 
 -- | create a new context using the backend and parameters specified.
-contextNew :: (MonadIO m, HasBackend backend, TLSParams params)
+contextNew :: (HasBackend IO backend, TLSParams IO params)
            => backend   -- ^ Backend abstraction with specific method to interact with the connection type.
            -> params    -- ^ Parameters of the context.
-           -> m Context
-contextNew backend params = liftIO $ do
+           -> IO (Context IO)
+contextNew backend params = do
     initializeBackend backend
 
     let (supported, shared, debug) = getTLSCommonParams params
@@ -145,53 +151,55 @@ contextNew backend params = liftIO $ do
     lockRead  <- newMVar ()
     lockState <- newMVar ()
 
+    let fromMVar v f = modifyMVar v $ fmap swap . f
+
     return Context
             { ctxConnection   = getBackend backend
             , ctxShared       = shared
             , ctxSupported    = supported
-            , ctxState        = stvar
-            , ctxTxState      = tx
-            , ctxRxState      = rx
-            , ctxHandshake    = hs
+            , ctxState        = fromMVar stvar
+            , ctxTxState      = fromMVar tx
+            , ctxRxState      = fromMVar rx
+            , ctxHandshake    = fromMVar hs
             , ctxDoHandshake  = doHandshake params
             , ctxDoHandshakeWith  = doHandshakeWith params
-            , ctxMeasurement  = stats
-            , ctxEOF_         = eof
-            , ctxEstablished_ = established
-            , ctxSSLv2ClientHello = sslv2Compat
-            , ctxNeedEmptyPacket  = needEmptyPacket
-            , ctxHooks            = hooks
-            , ctxLockWrite        = lockWrite
-            , ctxLockRead         = lockRead
-            , ctxLockState        = lockState
+            , ctxMeasurement  = (readIORef stats, writeIORef stats)
+            , ctxEOF_         = (readIORef eof, writeIORef eof)
+            , ctxEstablished_ = (readIORef established, writeIORef established)
+            , ctxSSLv2ClientHello = (readIORef sslv2Compat, writeIORef sslv2Compat)
+            , ctxNeedEmptyPacket_ = (readIORef needEmptyPacket, writeIORef needEmptyPacket)
+            , ctxHooks            = (readIORef hooks, writeIORef hooks)
+            , ctxLockWrite        = withMVar lockWrite . const
+            , ctxLockRead         = withMVar lockRead . const
+            , ctxLockState        = withMVar lockState . const
             }
 
 -- | create a new context on an handle.
-contextNewOnHandle :: (MonadIO m, TLSParams params)
+contextNewOnHandle :: TLSParams IO params
                    => Handle -- ^ Handle of the connection.
                    -> params -- ^ Parameters of the context.
-                   -> m Context
+                   -> IO (Context IO)
 contextNewOnHandle handle params = contextNew handle params
 {-# DEPRECATED contextNewOnHandle "use contextNew" #-}
 
 #ifdef INCLUDE_NETWORK
 -- | create a new context on a socket.
-contextNewOnSocket :: (MonadIO m, TLSParams params)
+contextNewOnSocket :: TLSParams IO params
                    => Socket -- ^ Socket of the connection.
                    -> params -- ^ Parameters of the context.
-                   -> m Context
+                   -> IO (Context IO)
 contextNewOnSocket sock params = contextNew sock params
 {-# DEPRECATED contextNewOnSocket "use contextNew" #-}
 #endif
 
-contextHookSetHandshakeRecv :: Context -> (Handshake -> IO Handshake) -> IO ()
+contextHookSetHandshakeRecv :: Monad m => Context m -> (Handshake -> m Handshake) -> m ()
 contextHookSetHandshakeRecv context f =
     contextModifyHooks context (\hooks -> hooks { hookRecvHandshake = f })
 
-contextHookSetCertificateRecv :: Context -> (CertificateChain -> IO ()) -> IO ()
+contextHookSetCertificateRecv :: Monad m => Context m -> (CertificateChain -> m ()) -> m ()
 contextHookSetCertificateRecv context f =
     contextModifyHooks context (\hooks -> hooks { hookRecvCertificates = f })
 
-contextHookSetLogging :: Context -> Logging -> IO ()
+contextHookSetLogging :: Monad m => Context m -> Logging m -> m ()
 contextHookSetLogging context loggingCallbacks =
     contextModifyHooks context (\hooks -> hooks { hookLogging = loggingCallbacks })

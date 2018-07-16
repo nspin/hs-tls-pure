@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- Disable this warning so we can still test deprecated functionality.
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 
@@ -43,14 +44,14 @@ runTLS debug ioDebug params cSock f = do
                               }
             | otherwise = logging
         ioLogging logging
-            | ioDebug = logging { loggingIOSent = mapM_ putStrLn . hexdump ">>"
-                                , loggingIORecv = \hdr body -> do
+            | ioDebug = logging { loggingMSent = mapM_ putStrLn . hexdump ">>"
+                                , loggingMRecv = \hdr body -> do
                                     putStrLn ("<< " ++ show hdr)
                                     mapM_ putStrLn $ hexdump "<<" body
                                 }
             | otherwise = logging
 
-getDefaultParams :: [Flag] -> CertificateStore -> SessionManager -> Credential -> IO ServerParams
+getDefaultParams :: [Flag] -> CertificateStore -> SessionManager IO -> Credential -> IO (ServerParams IO)
 getDefaultParams flags store smgr cred = do
     dhParams <- case getDHParams flags of
         Nothing   -> return Nothing
@@ -60,7 +61,8 @@ getDefaultParams flags store smgr cred = do
         { serverWantClientCert = False
         , serverCACertificates = []
         , serverDHEParams = dhParams
-        , serverShared = def { sharedSessionManager  = smgr
+        , serverShared = (def :: Shared IO)
+                            { sharedSessionManager  = smgr
                              , sharedCAStore         = store
                              , sharedValidationCache = validateCache
                              , sharedCredentials     = Credentials [cred]
@@ -69,7 +71,8 @@ getDefaultParams flags store smgr cred = do
         , serverSupported = def { supportedVersions = supportedVers
                                 , supportedCiphers = myCiphers
                                 , supportedClientInitiatedRenegotiation = allowRenegotiation }
-        , serverDebug = def { debugSeed      = foldl getDebugSeed Nothing flags
+        , serverDebug = (def :: DebugParams IO)
+                            { debugSeed      = foldl getDebugSeed Nothing flags
                             , debugPrintSeed = if DebugPrintSeed `elem` flags
                                                     then (\seed -> putStrLn ("seed: " ++ show (seedToInteger seed)))
                                                     else (\_ -> return ())

@@ -26,7 +26,6 @@ module Network.TLS.Core
     -- * High level API
     , sendData
     , recvData
-    , recvData'
     ) where
 
 import Network.TLS.Context
@@ -40,8 +39,8 @@ import Network.TLS.Util (catchException)
 import qualified Network.TLS.State as S
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
-import qualified Control.Exception as E
 
+import Control.Monad.Catch (MonadThrow, MonadCatch, throwM)
 import Control.Monad.State.Strict
 
 
@@ -50,27 +49,27 @@ import Control.Monad.State.Strict
 -- the session might not be resumable (for version < TLS1.2).
 --
 -- this doesn't actually close the handle
-bye :: MonadIO m => Context -> m ()
+bye :: MonadThrow m => Context m -> m ()
 bye ctx = do
-  eof <- liftIO $ ctxEOF ctx
+  eof <- ctxEOF ctx
   unless eof $ sendPacket ctx $ Alert [(AlertLevel_Warning, CloseNotify)]
 
 -- | If the ALPN extensions have been used, this will
 -- return get the protocol agreed upon.
-getNegotiatedProtocol :: MonadIO m => Context -> m (Maybe B.ByteString)
-getNegotiatedProtocol ctx = liftIO $ usingState_ ctx S.getNegotiatedProtocol
+getNegotiatedProtocol :: MonadThrow m => Context m -> m (Maybe B.ByteString)
+getNegotiatedProtocol ctx = usingState_ ctx S.getNegotiatedProtocol
 
 type HostName = String
 
 -- | If the Server Name Indication extension has been used, return the
 -- hostname specified by the client.
-getClientSNI :: MonadIO m => Context -> m (Maybe HostName)
-getClientSNI ctx = liftIO $ usingState_ ctx S.getClientSNI
+getClientSNI :: MonadThrow m => Context m -> m (Maybe HostName)
+getClientSNI ctx = usingState_ ctx S.getClientSNI
 
 -- | sendData sends a bunch of data.
 -- It will automatically chunk data to acceptable packet size
-sendData :: MonadIO m => Context -> L.ByteString -> m ()
-sendData ctx dataToSend = liftIO (checkValid ctx) >> mapM_ sendDataChunk (L.toChunks dataToSend)
+sendData :: MonadThrow m => Context m -> L.ByteString -> m ()
+sendData ctx dataToSend = checkValid ctx >> mapM_ sendDataChunk (L.toChunks dataToSend)
   where sendDataChunk d
             | B.length d > 16384 = do
                 let (sending, remain) = B.splitAt 16384 d
@@ -80,8 +79,8 @@ sendData ctx dataToSend = liftIO (checkValid ctx) >> mapM_ sendDataChunk (L.toCh
 
 -- | recvData get data out of Data packet, and automatically renegotiate if
 -- a Handshake ClientHello is received
-recvData :: MonadIO m => Context -> m B.ByteString
-recvData ctx = liftIO $ do
+recvData :: MonadCatch m => Context m -> m B.ByteString
+recvData ctx = do
     checkValid ctx
     pkt <- withReadLock ctx $ recvPacket ctx
     either onError process pkt
@@ -101,7 +100,7 @@ recvData ctx = liftIO $ do
         process (Alert [(AlertLevel_Warning, CloseNotify)]) = tryBye >> setEOF ctx >> return B.empty
         process (Alert [(AlertLevel_Fatal, desc)]) = do
             setEOF ctx
-            E.throwIO (Terminated True ("received fatal error: " ++ show desc) (Error_Protocol ("remote side fatal error", True, desc)))
+            throwM (Terminated True ("received fatal error: " ++ show desc) (Error_Protocol ("remote side fatal error", True, desc)))
 
         -- when receiving empty appdata, we just retry to get some data.
         process (AppData "") = recvData ctx
@@ -109,7 +108,6 @@ recvData ctx = liftIO $ do
         process p            = let reason = "unexpected message " ++ show p in
                                terminate (Error_Misc reason) AlertLevel_Fatal UnexpectedMessage reason
 
-        terminate :: TLSError -> AlertLevel -> AlertDescription -> String -> IO a
         terminate err level desc reason = do
             session <- usingState_ ctx getSession
             case session of
@@ -117,13 +115,8 @@ recvData ctx = liftIO $ do
                 Session (Just sid) -> sessionInvalidate (sharedSessionManager $ ctxShared ctx) sid
             catchException (sendPacket ctx $ Alert [(level, desc)]) (\_ -> return ())
             setEOF ctx
-            E.throwIO (Terminated False reason err)
+            throwM (Terminated False reason err)
 
         -- the other side could have close the connection already, so wrap
         -- this in a try and ignore all exceptions
         tryBye = catchException (bye ctx) (\_ -> return ())
-
-{-# DEPRECATED recvData' "use recvData that returns strict bytestring" #-}
--- | same as recvData but returns a lazy bytestring.
-recvData' :: MonadIO m => Context -> m L.ByteString
-recvData' ctx = recvData ctx >>= return . L.fromChunks . (:[])

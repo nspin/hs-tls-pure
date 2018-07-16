@@ -1,4 +1,4 @@
-name:                tls-session-manager
+name:                tls-pure-session-manager
 version:             0.0.0.2
 synopsis:            In-memory TLS session manager
 description:         TLS session manager with limitation, automatic pruning, energy saving and replay resistance
@@ -20,7 +20,7 @@ library
                      , auto-update
                      , clock
                      , psqueues >= 0.2.3
-                     , tls
+                     , tls-pure
   -- hs-source-dirs:
   default-language:    Haskell2010
   ghc-options:       -Wall

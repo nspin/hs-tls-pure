@@ -28,6 +28,7 @@ import Network.TLS.Handshake.State
 import Network.TLS.Handshake.Key
 import Network.TLS.Util
 
+import Control.Monad.Catch
 import Control.Monad.State.Strict
 
 signatureCompatible :: DigitalSignatureAlg -> HashAndSignatureAlgorithm -> Bool
@@ -39,12 +40,13 @@ signatureCompatible DSS   (_, SignatureDSS)          = True
 signatureCompatible ECDSA (_, SignatureECDSA)        = True
 signatureCompatible _     (_, _)                     = False
 
-checkCertificateVerify :: Context
+checkCertificateVerify :: MonadThrow m
+                       => Context m
                        -> Version
                        -> DigitalSignatureAlg
                        -> ByteString
                        -> DigitallySigned
-                       -> IO Bool
+                       -> m Bool
 checkCertificateVerify ctx usedVersion sigAlgExpected msgs digSig@(DigitallySigned hashSigAlg _) =
     case (usedVersion, hashSigAlg) of
         (TLS12, Nothing)    -> return False
@@ -57,12 +59,13 @@ checkCertificateVerify ctx usedVersion sigAlgExpected msgs digSig@(DigitallySign
         prepareCertificateVerifySignatureData ctx usedVersion sigAlgExpected hashSigAlg msgs >>=
         signatureVerifyWithCertVerifyData ctx digSig
 
-createCertificateVerify :: Context
+createCertificateVerify :: MonadThrow m
+                        => Context m
                         -> Version
                         -> DigitalSignatureAlg
                         -> Maybe HashAndSignatureAlgorithm -- TLS12 only
                         -> ByteString
-                        -> IO DigitallySigned
+                        -> m DigitallySigned
 createCertificateVerify ctx usedVersion sigAlg hashSigAlg msgs =
     prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs >>=
     signatureCreateWithCertVerifyData ctx hashSigAlg
@@ -75,12 +78,13 @@ buildVerifyData :: SignatureParams -> ByteString -> CertVerifyData
 buildVerifyData (RSAParams SHA1_MD5 enc) bs = (RSAParams SHA1_MD5 enc, hashFinal $ hashUpdate (hashInit SHA1_MD5) bs)
 buildVerifyData sigParam             bs = (sigParam, bs)
 
-prepareCertificateVerifySignatureData :: Context
+prepareCertificateVerifySignatureData :: MonadThrow m
+                                      => Context m
                                       -> Version
                                       -> DigitalSignatureAlg
                                       -> Maybe HashAndSignatureAlgorithm -- TLS12 only
                                       -> ByteString
-                                      -> IO CertVerifyData
+                                      -> m CertVerifyData
 prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs
     | usedVersion == SSL3 = do
         (hashCtx, params, generateCV_SSL) <-
@@ -124,15 +128,16 @@ signatureParams ECDSA hashSigAlg =
         Just (_         , sigAlg)         -> error ("signature algorithm is incompatible with ECDSA: " ++ show sigAlg)
 signatureParams sig _ = error ("unimplemented signature type: " ++ show sig)
 
-signatureCreateWithCertVerifyData :: Context
+signatureCreateWithCertVerifyData :: MonadThrow m
+                                  => Context m
                                   -> Maybe HashAndSignatureAlgorithm
                                   -> CertVerifyData
-                                  -> IO DigitallySigned
+                                  -> m DigitallySigned
 signatureCreateWithCertVerifyData ctx malg (sigParam, toSign) = do
     cc <- usingState_ ctx isClientContext
     DigitallySigned malg <$> signPrivate ctx cc sigParam toSign
 
-signatureVerify :: Context -> DigitallySigned -> DigitalSignatureAlg -> ByteString -> IO Bool
+signatureVerify :: MonadThrow m => Context m -> DigitallySigned -> DigitalSignatureAlg -> ByteString -> m Bool
 signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) sigAlgExpected toVerifyData = do
     usedVersion <- usingState_ ctx getVersion
     let (sigParam, toVerify) =
@@ -144,56 +149,61 @@ signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) sigAlgExpected toVerif
                 (_,     Just _)     -> error "not expecting hash and signature algorithm in a < TLS12 digitially signed structure"
     signatureVerifyWithCertVerifyData ctx digSig (sigParam, toVerify)
 
-signatureVerifyWithCertVerifyData :: Context
+signatureVerifyWithCertVerifyData :: MonadThrow m
+                                  => Context m
                                   -> DigitallySigned
                                   -> CertVerifyData
-                                  -> IO Bool
+                                  -> m Bool
 signatureVerifyWithCertVerifyData ctx (DigitallySigned _ bs) (sigParam, toVerify) = do
     cc <- usingState_ ctx isClientContext
     verifyPublic ctx cc sigParam toVerify bs
 
-digitallySignParams :: Context -> ByteString -> DigitalSignatureAlg -> Maybe HashAndSignatureAlgorithm -> IO DigitallySigned
+digitallySignParams :: MonadThrow m => Context m -> ByteString -> DigitalSignatureAlg -> Maybe HashAndSignatureAlgorithm -> m DigitallySigned
 digitallySignParams ctx signatureData sigAlg hashSigAlg =
     let sigParam = signatureParams sigAlg hashSigAlg
      in signatureCreateWithCertVerifyData ctx hashSigAlg (buildVerifyData sigParam signatureData)
 
-digitallySignDHParams :: Context
+digitallySignDHParams :: MonadThrow m
+                      => Context m
                       -> ServerDHParams
                       -> DigitalSignatureAlg
                       -> Maybe HashAndSignatureAlgorithm -- TLS12 only
-                      -> IO DigitallySigned
+                      -> m DigitallySigned
 digitallySignDHParams ctx serverParams sigAlg mhash = do
     dhParamsData <- withClientAndServerRandom ctx $ encodeSignedDHParams serverParams
     digitallySignParams ctx dhParamsData sigAlg mhash
 
-digitallySignECDHParams :: Context
+digitallySignECDHParams :: MonadThrow m
+                        => Context m
                         -> ServerECDHParams
                         -> DigitalSignatureAlg
                         -> Maybe HashAndSignatureAlgorithm -- TLS12 only
-                        -> IO DigitallySigned
+                        -> m DigitallySigned
 digitallySignECDHParams ctx serverParams sigAlg mhash = do
     ecdhParamsData <- withClientAndServerRandom ctx $ encodeSignedECDHParams serverParams
     digitallySignParams ctx ecdhParamsData sigAlg mhash
 
-digitallySignDHParamsVerify :: Context
+digitallySignDHParamsVerify :: MonadThrow m
+                            => Context m
                             -> ServerDHParams
                             -> DigitalSignatureAlg
                             -> DigitallySigned
-                            -> IO Bool
+                            -> m Bool
 digitallySignDHParamsVerify ctx dhparams sigAlg signature = do
     expectedData <- withClientAndServerRandom ctx $ encodeSignedDHParams dhparams
     signatureVerify ctx signature sigAlg expectedData
 
-digitallySignECDHParamsVerify :: Context
+digitallySignECDHParamsVerify :: MonadThrow m
+                              => Context m
                               -> ServerECDHParams
                               -> DigitalSignatureAlg
                               -> DigitallySigned
-                              -> IO Bool
+                              -> m Bool
 digitallySignECDHParamsVerify ctx dhparams sigAlg signature = do
     expectedData <- withClientAndServerRandom ctx $ encodeSignedECDHParams dhparams
     signatureVerify ctx signature sigAlg expectedData
 
-withClientAndServerRandom :: Context -> (ClientRandom -> ServerRandom -> b) -> IO b
+withClientAndServerRandom :: MonadThrow m => Context m -> (ClientRandom -> ServerRandom -> b) -> m b
 withClientAndServerRandom ctx f = do
     (cran, sran) <- usingHState ctx $ (,) <$> gets hstClientRandom
                                           <*> (fromJust "withClientAndServer : server random" <$> gets hstServerRandom)

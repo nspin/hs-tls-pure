@@ -31,8 +31,8 @@ import Network.TLS.X509
 import qualified Data.ByteString as B
 import Data.X509 (ExtKeyUsageFlag(..))
 
+import Control.Monad.Catch (MonadThrow, MonadCatch, SomeException)
 import Control.Monad.State.Strict
-import Control.Exception (SomeException)
 
 import Network.TLS.Handshake.Common
 import Network.TLS.Handshake.Process
@@ -41,13 +41,13 @@ import Network.TLS.Handshake.Signature
 import Network.TLS.Handshake.Key
 import Network.TLS.Handshake.State
 
-handshakeClientWith :: ClientParams -> Context -> Handshake -> IO ()
+handshakeClientWith :: (MonadThrow m, MonadCatch m) => ClientParams m -> Context m -> Handshake -> m ()
 handshakeClientWith cparams ctx HelloRequest = handshakeClient cparams ctx
 handshakeClientWith _       _   _            = throwCore $ Error_Protocol ("unexpected handshake message received in handshakeClientWith", True, HandshakeFailure)
 
 -- client part of handshake. send a bunch of handshake of client
 -- values intertwined with response from the server.
-handshakeClient :: ClientParams -> Context -> IO ()
+handshakeClient :: (MonadThrow m, MonadCatch m) => ClientParams m -> Context m -> m ()
 handshakeClient cparams ctx = do
     updateMeasure ctx incrementNbHandshakes
     sentExtensions <- sendClientHello
@@ -131,7 +131,7 @@ handshakeClient cparams ctx = do
 --       -> [certificate]
 --       -> client key exchange
 --       -> [cert verify]
-sendClientData :: ClientParams -> Context -> IO ()
+sendClientData :: (MonadThrow m, MonadCatch m) => ClientParams m -> Context m -> m ()
 sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertificateVerify
   where
         -- When the server requests a client certificate, we
@@ -148,7 +148,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
                     return ()
 
                 Just req -> do
-                    certChain <- liftIO $ (onCertificateRequest $ clientHooks cparams) req `catchException`
+                    certChain <- (onCertificateRequest $ clientHooks cparams) req `catchException`
                                  throwMiscErrorOnException "certificate request callback failed"
 
                     usingHState ctx $ setClientCertSent False
@@ -284,7 +284,7 @@ processServerExtension (ExtensionRaw 0xff01 content) = do
     return ()
 processServerExtension _ = return ()
 
-throwMiscErrorOnException :: String -> SomeException -> IO a
+throwMiscErrorOnException :: MonadThrow m => String -> SomeException -> m a
 throwMiscErrorOnException msg e =
     throwCore $ Error_Misc $ msg ++ ": " ++ show e
 
@@ -296,7 +296,7 @@ throwMiscErrorOnException msg e =
 -- 4) process the session parameter to see if the server want to start a new session or can resume
 -- 5) if no resume switch to processCertificate SM or in resume switch to expectChangeCipher
 --
-onServerHello :: Context -> ClientParams -> [ExtensionID] -> Handshake -> IO (RecvState IO)
+onServerHello :: (MonadThrow m, MonadCatch m) => Context m -> ClientParams m -> [ExtensionID] -> Handshake -> m (RecvState m)
 onServerHello ctx cparams sentExts (ServerHello rver serverRan serverSession cipher compression exts) = do
     when (rver == SSL2) $ throwCore $ Error_Protocol ("ssl2 is not supported", True, ProtocolVersion)
     case find (== rver) (supportedVersions $ ctxSupported ctx) of
@@ -342,7 +342,7 @@ onServerHello ctx cparams sentExts (ServerHello rver serverRan serverSession cip
             return $ RecvStateNext expectChangeCipher
 onServerHello _ _ _ p = unexpected (show p) (Just "server hello")
 
-processCertificate :: ClientParams -> Context -> Handshake -> IO (RecvState IO)
+processCertificate :: (MonadThrow m, MonadCatch m) => ClientParams m -> Context m -> Handshake -> m (RecvState m)
 processCertificate cparams ctx (Certificates certs) = do
     -- run certificate recv hook
     ctxWithHooks ctx (\hooks -> hookRecvCertificates hooks certs)
@@ -372,15 +372,15 @@ processCertificate cparams ctx (Certificates certs) = do
 
 processCertificate _ ctx p = processServerKeyExchange ctx p
 
-expectChangeCipher :: Packet -> IO (RecvState IO)
+expectChangeCipher :: MonadThrow m => Packet -> m (RecvState m)
 expectChangeCipher ChangeCipherSpec = return $ RecvStateHandshake expectFinish
 expectChangeCipher p                = unexpected (show p) (Just "change cipher")
 
-expectFinish :: Handshake -> IO (RecvState IO)
+expectFinish :: MonadThrow m => Handshake -> m (RecvState m)
 expectFinish (Finished _) = return RecvStateDone
 expectFinish p            = unexpected (show p) (Just "Handshake Finished")
 
-processServerKeyExchange :: Context -> Handshake -> IO (RecvState IO)
+processServerKeyExchange :: MonadThrow m => Context m -> Handshake -> m (RecvState m)
 processServerKeyExchange ctx (ServerKeyXchg origSkx) = do
     cipher <- usingHState ctx getPendingCipher
     processWithCipher cipher origSkx
@@ -416,7 +416,7 @@ processServerKeyExchange ctx (ServerKeyXchg origSkx) = do
 
 processServerKeyExchange ctx p = processCertificateRequest ctx p
 
-processCertificateRequest :: Context -> Handshake -> IO (RecvState IO)
+processCertificateRequest :: MonadThrow m => Context m -> Handshake -> m (RecvState m)
 processCertificateRequest ctx (CertRequest cTypes sigAlgs dNames) = do
     -- When the server requests a client
     -- certificate, we simply store the
@@ -426,7 +426,7 @@ processCertificateRequest ctx (CertRequest cTypes sigAlgs dNames) = do
     return $ RecvStateHandshake (processServerHelloDone ctx)
 processCertificateRequest ctx p = processServerHelloDone ctx p
 
-processServerHelloDone :: Context -> Handshake -> IO (RecvState m)
+processServerHelloDone :: MonadThrow m => Context m -> Handshake -> m (RecvState m)
 processServerHelloDone _ ServerHelloDone = return RecvStateDone
 processServerHelloDone _ p = unexpected (show p) (Just "server hello data")
 

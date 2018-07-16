@@ -115,7 +115,7 @@ arbitraryCipherPair connectVersion = do
                                             maybe True (<= connectVersion) (cipherMinVer x) | x <- cs])
     return (clientCiphers, serverCiphers)
 
-arbitraryPairParams :: Gen (ClientParams, ServerParams)
+arbitraryPairParams :: Gen (ClientParams IO, ServerParams IO)
 arbitraryPairParams = do
     connectVersion <- elements knownVersions
     (clientCiphers, serverCiphers) <- arbitraryCipherPair connectVersion
@@ -141,7 +141,7 @@ arbitraryHashSignaturePair = do
 
 arbitraryPairParamsWithVersionsAndCiphers :: ([Version], [Version])
                                           -> ([Cipher], [Cipher])
-                                          -> Gen (ClientParams, ServerParams)
+                                          -> Gen (ClientParams IO, ServerParams IO)
 arbitraryPairParamsWithVersionsAndCiphers (clientVersions, serverVersions) (clientCiphers, serverCiphers) = do
     secNeg             <- arbitrary
     dhparams           <- elements [dhParams,ffdhe2048,ffdhe3072]
@@ -185,7 +185,7 @@ arbitraryRSACredentialWithUsage usageFlags = do
 
 -- | simple session manager to store one session id and session data for a single thread.
 -- a Real concurrent session manager would use an MVar and have multiples items.
-oneSessionManager :: IORef (Maybe (SessionID, SessionData)) -> SessionManager
+oneSessionManager :: IORef (Maybe (SessionID, SessionData)) -> SessionManager IO
 oneSessionManager ref = SessionManager
     { sessionResume     = \myId     -> (>>= maybeResume myId) <$> readIORef ref
     , sessionEstablish  = \myId dat -> writeIORef ref $ Just (myId, dat)
@@ -196,18 +196,18 @@ oneSessionManager ref = SessionManager
         | sid == myId = Just sdata
         | otherwise   = Nothing
 
-setPairParamsSessionManager :: SessionManager -> (ClientParams, ServerParams) -> (ClientParams, ServerParams)
+setPairParamsSessionManager :: SessionManager IO -> (ClientParams IO, ServerParams IO) -> (ClientParams IO, ServerParams IO)
 setPairParamsSessionManager manager (clientState, serverState) = (nc,ns)
   where nc = clientState { clientShared = updateSessionManager $ clientShared clientState }
         ns = serverState { serverShared = updateSessionManager $ serverShared serverState }
         updateSessionManager shared = shared { sharedSessionManager = manager }
 
-setPairParamsSessionResuming :: (SessionID, SessionData) -> (ClientParams, ServerParams) -> (ClientParams, ServerParams)
+setPairParamsSessionResuming :: (SessionID, SessionData) -> (ClientParams IO, ServerParams IO) -> (ClientParams IO, ServerParams IO)
 setPairParamsSessionResuming sessionStuff (clientState, serverState) =
     ( clientState { clientWantSessionResume = Just sessionStuff }
     , serverState)
 
-newPairContext :: PipeChan -> (ClientParams, ServerParams) -> IO (Context, Context)
+newPairContext :: PipeChan -> (ClientParams IO, ServerParams IO) -> IO (Context IO, Context IO)
 newPairContext pipe (cParams, sParams) = do
     let noFlush = return ()
     let noClose = return ()
@@ -228,7 +228,7 @@ newPairContext pipe (cParams, sParams) = do
                                     , loggingPacketRecv = putStrLn . ((pre ++ "<< ") ++) }
                 else def
 
-establishDataPipe :: (ClientParams, ServerParams) -> (Context -> Chan result -> IO ()) -> (Chan start -> Context -> IO ()) -> IO (Chan start, Chan result)
+establishDataPipe :: (ClientParams IO, ServerParams IO) -> (Context IO -> Chan result -> IO ()) -> (Chan start -> Context IO -> IO ()) -> IO (Chan start, Chan result)
 establishDataPipe params tlsServer tlsClient = do
     -- initial setup
     pipe        <- newPipe
@@ -251,7 +251,7 @@ establishDataPipe params tlsServer tlsClient = do
                            ", supported: " ++ show supported
             E.throw e
 
-initiateDataPipe :: (ClientParams, ServerParams) -> (Context -> IO a1) -> (Context -> IO a) -> IO (Either E.SomeException a, Either E.SomeException a1)
+initiateDataPipe :: (ClientParams IO, ServerParams IO) -> (Context IO -> IO a1) -> (Context IO -> IO a) -> IO (Either E.SomeException a, Either E.SomeException a1)
 initiateDataPipe params tlsServer tlsClient = do
     -- initial setup
     pipe        <- newPipe

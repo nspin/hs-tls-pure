@@ -20,6 +20,7 @@ module Network.TLS.X509
     , ValidationCache
     , exceptionValidationCache
     , validateDefault
+    , validateTrivial
     , FailedReason
     , ServiceID
     , wrapCertificateChecks
@@ -57,3 +58,7 @@ wrapCertificateChecks l
     | InFuture `elem` l  = CertificateUsageReject   CertificateRejectExpired
     | UnknownCA `elem` l = CertificateUsageReject   CertificateRejectUnknownCA
     | otherwise          = CertificateUsageReject $ CertificateRejectOther (show l)
+
+-- | Validation always succeeds
+validateTrivial :: Monad m => CertificateStore -> ValidationCache -> ServiceID -> CertificateChain -> m [FailedReason]
+validateTrivial _ _ _ _ = return []

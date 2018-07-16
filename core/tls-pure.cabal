@@ -1,4 +1,4 @@
-Name:                tls
+Name:                tls-pure
 Version:             1.4.1
 Description:
    Native Haskell TLS and SSL protocol implementation for server and client.
@@ -46,6 +46,7 @@ Library
                    , cereal >= 0.4
                    , bytestring
                    , data-default-class
+                   , exceptions
                    -- crypto related
                    , memory >= 0.14.6
                    , cryptonite >= 0.25
@@ -118,7 +119,7 @@ Library
   if flag(compat)
     cpp-options:     -DSSLV2_COMPATIBLE
 
-Test-Suite test-tls
+Test-Suite test-tls-pure
   type:              exitcode-stdio-1.0
   hs-source-dirs:    Tests
   Main-is:           Tests.hs
@@ -129,12 +130,12 @@ Test-Suite test-tls
                      PipeChan
                      PubKey
   Build-Depends:     base >= 3 && < 5
+                   , tls-pure
                    , mtl
                    , cereal >= 0.3
                    , data-default-class
                    , tasty
                    , tasty-quickcheck
-                   , tls
                    , QuickCheck
                    , cryptonite
                    , bytestring
@@ -144,12 +145,12 @@ Test-Suite test-tls
                    , hourglass
   ghc-options:       -Wall -fno-warn-unused-imports
 
-Benchmark bench-tls
+Benchmark bench-tls-pure
   hs-source-dirs:    Benchmarks Tests
   Main-Is:           Benchmarks.hs
   type:              exitcode-stdio-1.0
   Build-depends:     base >= 4 && < 5
-                   , tls
+                   , tls-pure
                    , x509
                    , x509-validation
                    , data-default-class
@@ -161,7 +162,6 @@ Benchmark bench-tls
                    , hourglass
                    , QuickCheck >= 2
                    , tasty-quickcheck
-                   , tls
   ghc-options:       -Wall -fno-warn-unused-imports
 
 source-repository head

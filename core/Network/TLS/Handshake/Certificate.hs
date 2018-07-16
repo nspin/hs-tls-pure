@@ -15,12 +15,12 @@ module Network.TLS.Handshake.Certificate
 import Network.TLS.Context.Internal
 import Network.TLS.Struct
 import Network.TLS.X509
+import Control.Monad.Catch (MonadThrow, SomeException)
 import Control.Monad.State.Strict
-import Control.Exception (SomeException)
 import Data.X509 (ExtKeyUsage(..), ExtKeyUsageFlag, extensionGet, getSigned, signedObject)
 
 -- on certificate reject, throw an exception with the proper protocol alert error.
-certificateRejected :: MonadIO m => CertificateRejectReason -> m a
+certificateRejected :: MonadThrow m => CertificateRejectReason -> m a
 certificateRejected CertificateRejectRevoked =
     throwCore $ Error_Protocol ("certificate is revoked", True, CertificateRevoked)
 certificateRejected CertificateRejectExpired =
@@ -30,13 +30,13 @@ certificateRejected CertificateRejectUnknownCA =
 certificateRejected (CertificateRejectOther s) =
     throwCore $ Error_Protocol ("certificate rejected: " ++ s, True, CertificateUnknown)
 
-badCertificate :: MonadIO m => String -> m a
+badCertificate :: MonadThrow m => String -> m a
 badCertificate msg = throwCore $ Error_Protocol (msg, True, BadCertificate)
 
-rejectOnException :: SomeException -> IO CertificateUsage
+rejectOnException :: Monad m => SomeException -> m CertificateUsage
 rejectOnException e = return $ CertificateUsageReject $ CertificateRejectOther $ show e
 
-verifyLeafKeyUsage :: MonadIO m => ExtKeyUsageFlag -> CertificateChain -> m ()
+verifyLeafKeyUsage :: MonadThrow m => ExtKeyUsageFlag -> CertificateChain -> m ()
 verifyLeafKeyUsage _    (CertificateChain [])         = return ()
 verifyLeafKeyUsage flag (CertificateChain (signed:_)) =
     unless verified $

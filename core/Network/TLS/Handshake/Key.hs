@@ -20,6 +20,7 @@ module Network.TLS.Handshake.Key
     ) where
 
 import qualified Data.ByteString as B
+import Control.Monad.Catch
 
 import Network.TLS.Handshake.State
 import Network.TLS.State (withRNG, getVersion)
@@ -31,7 +32,7 @@ import Network.TLS.Imports
 {- if the RSA encryption fails we just return an empty bytestring, and let the protocol
  - fail by itself; however it would be probably better to just report it since it's an internal problem.
  -}
-encryptRSA :: Context -> ByteString -> IO ByteString
+encryptRSA :: MonadThrow m => Context m -> ByteString -> m ByteString
 encryptRSA ctx content = do
     publicKey <- usingHState ctx getRemotePublicKey
     usingState_ ctx $ do
@@ -40,7 +41,7 @@ encryptRSA ctx content = do
             Left err       -> fail ("rsa encrypt failed: " ++ show err)
             Right econtent -> return econtent
 
-signPrivate :: Context -> Role -> SignatureParams -> ByteString -> IO ByteString
+signPrivate :: MonadThrow m => Context m -> Role -> SignatureParams -> ByteString -> m ByteString
 signPrivate ctx _ params content = do
     privateKey <- usingHState ctx getLocalPrivateKey
     usingState_ ctx $ do
@@ -49,7 +50,7 @@ signPrivate ctx _ params content = do
             Left err       -> fail ("sign failed: " ++ show err)
             Right econtent -> return econtent
 
-decryptRSA :: Context -> ByteString -> IO (Either KxError ByteString)
+decryptRSA :: MonadThrow m => Context m -> ByteString -> m (Either KxError ByteString)
 decryptRSA ctx econtent = do
     privateKey <- usingHState ctx getLocalPrivateKey
     usingState_ ctx $ do
@@ -57,22 +58,22 @@ decryptRSA ctx econtent = do
         let cipher = if ver < TLS10 then econtent else B.drop 2 econtent
         withRNG $ kxDecrypt privateKey cipher
 
-verifyPublic :: Context -> Role -> SignatureParams -> ByteString -> ByteString -> IO Bool
+verifyPublic :: MonadThrow m => Context m -> Role -> SignatureParams -> ByteString -> ByteString -> m Bool
 verifyPublic ctx _ params econtent sign = do
     publicKey <- usingHState ctx getRemotePublicKey
     return $ kxVerify publicKey params econtent sign
 
-generateDHE :: Context -> DHParams -> IO (DHPrivate, DHPublic)
+generateDHE :: MonadThrow m => Context m -> DHParams -> m (DHPrivate, DHPublic)
 generateDHE ctx dhp = usingState_ ctx $ withRNG $ dhGenerateKeyPair dhp
 
-generateECDHE :: Context -> Group -> IO (GroupPrivate, GroupPublic)
+generateECDHE :: MonadThrow m => Context m -> Group -> m (GroupPrivate, GroupPublic)
 generateECDHE ctx grp = usingState_ ctx $ withRNG $ groupGenerateKeyPair grp
 
-generateECDHEShared :: Context -> GroupPublic -> IO (Maybe (GroupPublic, GroupKey))
+generateECDHEShared :: MonadThrow m => Context m -> GroupPublic -> m (Maybe (GroupPublic, GroupKey))
 generateECDHEShared ctx pub = usingState_ ctx $ withRNG $ groupGetPubShared pub
 
-generateFFDHE :: Context -> Group -> IO (DHParams, DHPrivate, DHPublic)
+generateFFDHE :: MonadThrow m => Context m -> Group -> m (DHParams, DHPrivate, DHPublic)
 generateFFDHE ctx grp = usingState_ ctx $ withRNG $ dhGroupGenerateKeyPair grp
 
-generateFFDHEShared :: Context -> Group -> DHPublic -> IO (Maybe (DHPublic, DHKey))
+generateFFDHEShared :: MonadThrow m => Context m -> Group -> DHPublic -> m (Maybe (DHPublic, DHKey))
 generateFFDHEShared ctx grp pub = usingState_ ctx $ withRNG $ dhGroupGetPubShared grp pub

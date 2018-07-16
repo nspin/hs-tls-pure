@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 
 import Control.Exception
@@ -16,9 +17,10 @@ import System.Exit
 import System.IO
 import System.Timeout
 import System.X509
-
 import Network.TLS
 import Network.TLS.Extra.Cipher
+import Data.X509 (CertificateChain, DistinguishedName)
+import Data.X509.CertificateStore (CertificateStore)
 
 import Common
 import HexDump
@@ -46,8 +48,8 @@ runTLS debug ioDebug params hostname portNumber f = do
                               }
             | otherwise = logging
         ioLogging logging
-            | ioDebug = logging { loggingIOSent = mapM_ putStrLn . hexdump ">>"
-                                , loggingIORecv = \hdr body -> do
+            | ioDebug = logging { loggingMSent = mapM_ putStrLn . hexdump ">>"
+                                , loggingMRecv = \hdr body -> do
                                     putStrLn ("<< " ++ show hdr)
                                     mapM_ putStrLn $ hexdump "<<" body
                                 }
@@ -59,21 +61,33 @@ sessionRef ref = SessionManager
     , sessionInvalidate = \_         -> return ()
     }
 
+getDefaultParams :: [Flag]
+                 -> String
+                 -> CertificateStore
+                 -> IORef (SessionID, SessionData)
+                 -> Maybe ( Credentials
+                          , ([CertificateType], Maybe [HashAndSignatureAlgorithm], [DistinguishedName])
+                                -> IO (Maybe (CertificateChain, PrivKey))
+                          )
+                 -> Maybe (SessionID, SessionData)
+                 -> ClientParams IO
 getDefaultParams flags host store sStorage certCredsRequest session =
-    (defaultParamsClient serverName BC.empty)
+    ((defaultParamsClient :: HostName -> ByteString -> ClientParams IO) serverName BC.empty)
         { clientSupported = def { supportedVersions = supportedVers, supportedCiphers = myCiphers }
         , clientWantSessionResume = session
         , clientUseServerNameIndication = not (NoSNI `elem` flags)
-        , clientShared = def { sharedSessionManager  = sessionRef sStorage
-                             , sharedCAStore         = store
-                             , sharedValidationCache = validateCache
-                             , sharedCredentials     = maybe mempty fst certCredsRequest
-                             }
+        , clientShared = (def :: Shared IO)
+                            { sharedSessionManager  = sessionRef sStorage
+                            , sharedCAStore         = store
+                            , sharedValidationCache = validateCache
+                            , sharedCredentials     = maybe mempty fst certCredsRequest
+                            }
         , clientHooks = def { onCertificateRequest = maybe (onCertificateRequest def) snd certCredsRequest }
-        , clientDebug = def { debugSeed      = foldl getDebugSeed Nothing flags
+        , clientDebug = (def :: DebugParams IO)
+                            { debugSeed      = foldl getDebugSeed Nothing flags
                             , debugPrintSeed = if DebugPrintSeed `elem` flags
-                                                    then (\seed -> putStrLn ("seed: " ++ show (seedToInteger seed)))
-                                                    else (\_ -> return ())
+                                               then (\seed -> putStrLn ("seed: " ++ show (seedToInteger seed)))
+                                               else (\_ -> return ())
                             }
         }
     where

@@ -10,9 +10,8 @@
 --
 module Network.TLS.Sending (writePacket) where
 
+import Control.Monad.Catch
 import Control.Monad.State.Strict
-import Control.Concurrent.MVar
-import Data.IORef
 
 import qualified Data.ByteString as B
 
@@ -47,7 +46,7 @@ encodeRecord record = return $ B.concat [ encodeHeader hdr, content ]
 
 -- | writePacket transform a packet into marshalled data related to current state
 -- and updating state on the go
-writePacket :: Context -> Packet -> IO (Either TLSError ByteString)
+writePacket :: MonadThrow m => Context m -> Packet -> m (Either TLSError ByteString)
 writePacket ctx pkt@(Handshake hss) = do
     forM_ hss $ \hs -> do
         case hs of
@@ -65,10 +64,10 @@ writePacket ctx pkt = do
 
 -- before TLS 1.1, the block cipher IV is made of the residual of the previous block,
 -- so we use cstIV as is, however in other case we generate an explicit IV
-prepareRecord :: Context -> RecordM a -> IO (Either TLSError a)
+prepareRecord :: MonadThrow m => Context m -> RecordM a -> m (Either TLSError a)
 prepareRecord ctx f = do
     ver     <- usingState_ ctx (getVersionWithDefault $ maximum $ supportedVersions $ ctxSupported ctx)
-    txState <- readMVar $ ctxTxState ctx
+    txState <- readMMVar $ ctxTxState ctx
     let sz = case stCipher txState of
                   Nothing     -> 0
                   Just cipher -> if hasRecordIV $ bulkF $ cipherBulk cipher
@@ -79,13 +78,13 @@ prepareRecord ctx f = do
                 runTxState ctx (modify (setRecordIV newIV) >> f)
         else runTxState ctx f
 
-switchTxEncryption :: Context -> IO ()
+switchTxEncryption :: MonadThrow m => Context m -> m ()
 switchTxEncryption ctx = do
     tx  <- usingHState ctx (fromJust "tx-state" <$> gets hstPendingTxState)
     (ver, cc) <- usingState_ ctx $ do v <- getVersion
                                       c <- isClientContext
                                       return (v, c)
-    liftIO $ modifyMVar_ (ctxTxState ctx) (\_ -> return tx)
+    ctxTxState ctx (\_ -> return ((), tx))
     -- set empty packet counter measure if condition are met
-    when (ver <= TLS10 && cc == ClientRole && isCBC tx && supportedEmptyPacket (ctxSupported ctx)) $ liftIO $ writeIORef (ctxNeedEmptyPacket ctx) True
+    when (ver <= TLS10 && cc == ClientRole && isCBC tx && supportedEmptyPacket (ctxSupported ctx)) $ setNeedEmptyPacket ctx True
   where isCBC tx = maybe False (\c -> bulkBlockSize (cipherBulk c) > 0) (stCipher tx)

@@ -24,27 +24,25 @@ import Network.TLS.Handshake.Common
 import Network.TLS.Handshake.Client
 import Network.TLS.Handshake.Server
 
-import Control.Monad.State.Strict
-import Control.Exception (IOException, catch, fromException)
+import Control.Monad.Catch (MonadThrow, MonadCatch, catch, fromException)
+import Control.Exception (IOException)
 
 -- | Handshake for a new TLS connection
 -- This is to be called at the beginning of a connection, and during renegotiation
-handshake :: MonadIO m => Context -> m ()
-handshake ctx =
-    liftIO $ handleException ctx $ withRWLock ctx (ctxDoHandshake ctx ctx)
+handshake :: MonadCatch m => Context m -> m ()
+handshake ctx = handleException ctx $ withRWLock ctx (ctxDoHandshake ctx ctx)
 
 -- Handshake when requested by the remote end
 -- This is called automatically by 'recvData'
-handshakeWith :: MonadIO m => Context -> Handshake -> m ()
-handshakeWith ctx hs =
-    liftIO $ handleException ctx $ withRWLock ctx $ ctxDoHandshakeWith ctx ctx hs
+handshakeWith :: MonadCatch m => Context m -> Handshake -> m ()
+handshakeWith ctx hs = handleException ctx $ withRWLock ctx $ ctxDoHandshakeWith ctx ctx hs
 
-handleException :: Context -> IO () -> IO ()
+handleException :: (MonadThrow m, MonadCatch m) => Context m -> m () -> m ()
 handleException ctx f = catchException f $ \exception -> do
     let tlserror = fromMaybe (Error_Misc $ show exception) $ fromException exception
     setEstablished ctx False
     sendPacket ctx (errorToAlert tlserror) `catch` ignoreIOErr
     handshakeFailed tlserror
   where
-    ignoreIOErr :: IOException -> IO ()
+    ignoreIOErr :: Monad m => IOException -> m ()
     ignoreIOErr _ = return ()

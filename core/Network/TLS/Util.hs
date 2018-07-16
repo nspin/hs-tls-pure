@@ -15,8 +15,7 @@ module Network.TLS.Util
 import qualified Data.ByteString as B
 import Network.TLS.Imports
 
-import Control.Exception (SomeException)
-import Control.Concurrent.Async
+import Control.Monad.Catch (MonadCatch, catch, SomeException)
 
 sub :: ByteString -> Int -> Int -> Maybe ByteString
 sub b offset len
@@ -74,5 +73,6 @@ bytesEq b1 b2
 fmapEither :: (a -> b) -> Either l a -> Either l b
 fmapEither f = fmap f
 
-catchException :: IO a -> (SomeException -> IO a) -> IO a
-catchException action handler = withAsync action waitCatch >>= either handler return
+-- TODO what was the purpose of the original definition of this function?
+catchException :: MonadCatch m => m a -> (SomeException -> m a) -> m a
+catchException = catch

@@ -41,10 +41,10 @@ import qualified Data.ByteString as B
 
 type HostName = String
 
-type CommonParams = (Supported, Shared, DebugParams)
+type CommonParams m = (Supported, Shared m, DebugParams m)
 
 -- | All settings should not be used in production
-data DebugParams = DebugParams
+data DebugParams m = DebugParams
     {
       -- | Disable the true randomness in favor of deterministic seed that will produce
       -- a deterministic random from. This is useful for tests and debugging purpose.
@@ -52,21 +52,21 @@ data DebugParams = DebugParams
       debugSeed :: Maybe Seed
       -- | Add a way to print the seed that was randomly generated. re-using the same seed
       -- will reproduce the same randomness with 'debugSeed'
-    , debugPrintSeed :: Seed -> IO ()
+    , debugPrintSeed :: Seed -> m ()
     }
 
-defaultDebugParams :: DebugParams
+defaultDebugParams :: Monad m => DebugParams m
 defaultDebugParams = DebugParams
     { debugSeed = Nothing
     , debugPrintSeed = const (return ())
     }
 
-instance Show DebugParams where
+instance Show (DebugParams m) where
     show _ = "DebugParams"
-instance Default DebugParams where
+instance Monad m => Default (DebugParams m) where
     def = defaultDebugParams
 
-data ClientParams = ClientParams
+data ClientParams m = ClientParams
     { clientUseMaxFragmentLength    :: Maybe MaxFragmentEnum
       -- | Define the name of the server, along with an extra service identification blob.
       -- this is important that the hostname part is properly filled for security reason,
@@ -83,15 +83,15 @@ data ClientParams = ClientParams
     , clientUseServerNameIndication   :: Bool
       -- | try to establish a connection using this session.
     , clientWantSessionResume         :: Maybe (SessionID, SessionData)
-    , clientShared                    :: Shared
-    , clientHooks                     :: ClientHooks
+    , clientShared                    :: Shared m
+    , clientHooks                     :: ClientHooks m
       -- | In this element, you'll  need to override the default empty value of
       -- of 'supportedCiphers' with a suitable cipherlist.
     , clientSupported                 :: Supported
-    , clientDebug                     :: DebugParams
+    , clientDebug                     :: DebugParams m
     } deriving (Show)
 
-defaultParamsClient :: HostName -> ByteString -> ClientParams
+defaultParamsClient :: Monad m => HostName -> ByteString -> ClientParams m
 defaultParamsClient serverName serverId = ClientParams
     { clientWantSessionResume    = Nothing
     , clientUseMaxFragmentLength = Nothing
@@ -103,7 +103,7 @@ defaultParamsClient serverName serverId = ClientParams
     , clientDebug                = defaultDebugParams
     }
 
-data ServerParams = ServerParams
+data ServerParams m = ServerParams
     { -- | request a certificate from client.
       serverWantClientCert    :: Bool
 
@@ -121,13 +121,13 @@ data ServerParams = ServerParams
       -- 'Crypto.PubKey.DH.generateParams'.
     , serverDHEParams         :: Maybe DHParams
 
-    , serverShared            :: Shared
-    , serverHooks             :: ServerHooks
+    , serverShared            :: Shared m
+    , serverHooks             :: ServerHooks m
     , serverSupported         :: Supported
-    , serverDebug             :: DebugParams
+    , serverDebug             :: DebugParams m
     } deriving (Show)
 
-defaultParamsServer :: ServerParams
+defaultParamsServer :: Monad m => ServerParams m
 defaultParamsServer = ServerParams
     { serverWantClientCert   = False
     , serverCACertificates   = []
@@ -138,7 +138,7 @@ defaultParamsServer = ServerParams
     , serverDebug            = defaultDebugParams
     }
 
-instance Default ServerParams where
+instance Monad m => Default (ServerParams m) where
     def = defaultParamsServer
 
 -- | List all the supported algorithms, versions, ciphers, etc supported.
@@ -221,16 +221,16 @@ defaultSupported = Supported
 instance Default Supported where
     def = defaultSupported
 
-data Shared = Shared
+data Shared m = Shared
     { sharedCredentials     :: Credentials
-    , sharedSessionManager  :: SessionManager
+    , sharedSessionManager  :: SessionManager m
     , sharedCAStore         :: CertificateStore
     , sharedValidationCache :: ValidationCache
     }
 
-instance Show Shared where
+instance Show (Shared m) where
     show _ = "Shared"
-instance Default Shared where
+instance Monad m => Default (Shared m) where
     def = Shared
             { sharedCAStore         = mempty
             , sharedCredentials     = mempty
@@ -246,7 +246,7 @@ data GroupUsage =
         | GroupUsageInvalidPublic         -- ^ usage of group with an invalid public value
         deriving (Show,Eq)
 
-defaultGroupUsage :: DHParams -> DHPublic -> IO GroupUsage
+defaultGroupUsage :: Monad m => DHParams -> DHPublic -> m GroupUsage
 defaultGroupUsage params public
     | even $ dhParamsGetP params                   = return $ GroupUsageUnsupported "invalid odd prime"
     | not $ dhValid params (dhParamsGetG params)   = return $ GroupUsageUnsupported "invalid generator"
@@ -254,7 +254,7 @@ defaultGroupUsage params public
     | otherwise                                    = return   GroupUsageValid
 
 -- | A set of callbacks run by the clients for various corners of TLS establishment
-data ClientHooks = ClientHooks
+data ClientHooks m = ClientHooks
     { -- | This action is called when the server sends a
       -- certificate request.  The parameter is the information
       -- from the request.  The action should select a certificate
@@ -276,42 +276,44 @@ data ClientHooks = ClientHooks
       -- depending whether the server accepts it.
       onCertificateRequest :: ([CertificateType],
                                Maybe [HashAndSignatureAlgorithm],
-                               [DistinguishedName]) -> IO (Maybe (CertificateChain, PrivKey))
+                               [DistinguishedName]) -> m (Maybe (CertificateChain, PrivKey))
       -- | Used by the client to validate the server certificate.  The default
-      -- implementation calls 'validateDefault' which validates according to the
-      -- default hooks and checks provided by "Data.X509.Validation".  This can
-      -- be replaced with a custom validation function using different settings.
+      -- implementation calls 'validateTrivial', which DOES NOT DO ANY
+      -- VALIDATION AT ALL. For 'IO', "Data.X509.Validation" provides
+      -- 'validateDefault', which validates according to the default hooks and
+      -- checks. Otherwise, this can be replaced with a custom validation
+      -- function using different settings.
       --
       -- The function is not expected to verify the key-usage extension of the
       -- end-entity certificate, as this depends on the dynamically-selected
       -- cipher and this part should not be cached.  Key-usage verification
       -- is performed by the library internally.
-    , onServerCertificate  :: CertificateStore -> ValidationCache -> ServiceID -> CertificateChain -> IO [FailedReason]
+    , onServerCertificate  :: CertificateStore -> ValidationCache -> ServiceID -> CertificateChain -> m [FailedReason]
       -- | This action is called when the client sends ClientHello
       --   to determine ALPN values such as '["h2", "http/1.1"]'.
-    , onSuggestALPN :: IO (Maybe [B.ByteString])
+    , onSuggestALPN :: m (Maybe [B.ByteString])
       -- | This action is called to validate DHE parameters when
       --   the server selected a finite-field group not part of
       --   the "Supported Groups Registry".
       --   See RFC 7919 section 3.1 for recommandations.
-    , onCustomFFDHEGroup :: DHParams -> DHPublic -> IO GroupUsage
+    , onCustomFFDHEGroup :: DHParams -> DHPublic -> m GroupUsage
     }
 
-defaultClientHooks :: ClientHooks
+defaultClientHooks :: Monad m => ClientHooks m
 defaultClientHooks = ClientHooks
     { onCertificateRequest = \ _ -> return Nothing
-    , onServerCertificate  = validateDefault
+    , onServerCertificate  = validateTrivial
     , onSuggestALPN        = return Nothing
     , onCustomFFDHEGroup   = defaultGroupUsage
     }
 
-instance Show ClientHooks where
+instance Show (ClientHooks m) where
     show _ = "ClientHooks"
-instance Default ClientHooks where
+instance Monad m => Default (ClientHooks m) where
     def = defaultClientHooks
 
 -- | A set of callbacks run by the server for various corners of the TLS establishment
-data ServerHooks = ServerHooks
+data ServerHooks m = ServerHooks
     {
       -- | This action is called when a client certificate chain
       -- is received from the client.  When it returns a
@@ -320,12 +322,12 @@ data ServerHooks = ServerHooks
       -- The function is not expected to verify the key-usage
       -- extension of the certificate.  This verification is
       -- performed by the library internally.
-      onClientCertificate :: CertificateChain -> IO CertificateUsage
+      onClientCertificate :: CertificateChain -> m CertificateUsage
 
       -- | This action is called when the client certificate
       -- cannot be verified. Return 'True' to accept the certificate
       -- anyway, or 'False' to fail verification.
-    , onUnverifiedClientCert :: IO Bool
+    , onUnverifiedClientCert :: m Bool
 
       -- | Allow the server to choose the cipher relative to the
       -- the client version and the client list of ciphers.
@@ -346,18 +348,18 @@ data ServerHooks = ServerHooks
       --
       -- Returned credentials may be ignored if a client does not support
       -- the signature algorithms used in the certificate chain.
-    , onServerNameIndication  :: Maybe HostName -> IO Credentials
+    , onServerNameIndication  :: Maybe HostName -> m Credentials
 
       -- | at each new handshake, we call this hook to see if we allow handshake to happens.
-    , onNewHandshake          :: Measurement -> IO Bool
+    , onNewHandshake          :: Measurement -> m Bool
 
       -- | Allow the server to choose an application layer protocol
       --   suggested from the client through the ALPN
       --   (Application Layer Protocol Negotiation) extensions.
-    , onALPNClientSuggest     :: Maybe ([B.ByteString] -> IO B.ByteString)
+    , onALPNClientSuggest     :: Maybe ([B.ByteString] -> m B.ByteString)
     }
 
-defaultServerHooks :: ServerHooks
+defaultServerHooks :: Monad m => ServerHooks m
 defaultServerHooks = ServerHooks
     { onCipherChoosing       = \_ -> head
     , onClientCertificate    = \_ -> return $ CertificateUsageReject $ CertificateRejectOther "no client certificates expected"
@@ -367,7 +369,7 @@ defaultServerHooks = ServerHooks
     , onALPNClientSuggest    = Nothing
     }
 
-instance Show ServerHooks where
+instance Show (ServerHooks m) where
     show _ = "ServerHooks"
-instance Default ServerHooks where
+instance Monad m => Default (ServerHooks m) where
     def = defaultServerHooks

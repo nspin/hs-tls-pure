@@ -1,9 +1,5 @@
-resolver: lts-10.5
+resolver: lts-12.0
 packages:
 - core/ 
 - debug/
 - session/
-extra-deps:
-- cryptonite-0.24
-flags: {}
-extra-package-dbs:

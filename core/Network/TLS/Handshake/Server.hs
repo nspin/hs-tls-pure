@@ -32,7 +32,7 @@ import Network.TLS.Measurement
 import qualified Data.ByteString as B
 import Data.X509 (ExtKeyUsageFlag(..))
 
-import Control.Monad.State.Strict
+import Control.Monad.Catch (MonadCatch, MonadThrow)
 
 import Network.TLS.Handshake.Signature
 import Network.TLS.Handshake.Common
@@ -45,8 +45,8 @@ import Network.TLS.X509
 --
 -- This is just a helper to pop the next message from the recv layer,
 -- and call handshakeServerWith.
-handshakeServer :: MonadIO m => ServerParams -> Context -> m ()
-handshakeServer sparams ctx = liftIO $ do
+handshakeServer :: MonadCatch m => ServerParams m -> Context m -> m ()
+handshakeServer sparams ctx = do
     hss <- recvPacketHandshake ctx
     case hss of
         [ch] -> handshakeServerWith sparams ctx ch
@@ -76,7 +76,7 @@ handshakeServer sparams ctx = liftIO $ do
 --      -> change cipher      <- change cipher
 --      -> finish             <- finish
 --
-handshakeServerWith :: ServerParams -> Context -> Handshake -> IO ()
+handshakeServerWith :: MonadCatch m => ServerParams m -> Context m -> Handshake -> m ()
 handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientSession ciphers compressions exts _) = do
     -- rejecting client initiated renegotiation to prevent DOS.
     unless (supportedClientInitiatedRenegotiation (ctxSupported ctx)) $ do
@@ -212,7 +212,7 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
 
     resumeSessionData <- case clientSession of
             (Session (Just clientSessionId)) ->
-                let resume = liftIO $ sessionResume (sharedSessionManager $ ctxShared ctx) clientSessionId
+                let resume = sessionResume (sharedSessionManager $ ctxShared ctx) clientSessionId
                  in validateSession serverName <$> resume
             (Session Nothing)                -> return Nothing
 
@@ -250,14 +250,15 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
 
 handshakeServerWith _ _ _ = throwCore $ Error_Protocol ("unexpected handshake message received in handshakeServerWith", True, HandshakeFailure)
 
-doHandshake :: ServerParams -> Maybe Credential -> Context -> Version -> Cipher
+doHandshake :: (MonadThrow m, MonadCatch m)
+            => ServerParams m -> Maybe Credential -> Context m -> Version -> Cipher
             -> Compression -> Session -> Maybe SessionData
-            -> [ExtensionRaw] -> IO ()
+            -> [ExtensionRaw] -> m ()
 doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSession resumeSessionData exts = do
     case resumeSessionData of
         Nothing -> do
             handshakeSendServerData
-            liftIO $ contextFlush ctx
+            contextFlush ctx
             -- Receive client info until client Finished.
             recvClientData sparams ctx
             sendChangeCipherAndFinish ctx ServerRole
@@ -276,7 +277,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
             suggest <- usingState_ ctx getClientALPNSuggest
             case (onALPNClientSuggest $ serverHooks sparams, suggest) of
                 (Just io, Just protos) -> do
-                    proto <- liftIO $ io protos
+                    proto <- io protos
                     usingState_ ctx $ do
                         setExtensionALPN True
                         setNegotiatedProtocol proto
@@ -444,7 +445,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
 --      <- change cipher
 --      <- finish
 --
-recvClientData :: ServerParams -> Context -> IO ()
+recvClientData :: (MonadThrow m, MonadCatch m) => ServerParams m -> Context m -> m ()
 recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientCertificate)
   where processClientCertificate (Certificates certs) = do
             -- run certificate recv hook
@@ -452,7 +453,7 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
             -- Call application callback to see whether the
             -- certificate chain is acceptable.
             --
-            usage <- liftIO $ catchException (onClientCertificate (serverHooks sparams) certs) rejectOnException
+            usage <- catchException (onClientCertificate (serverHooks sparams) certs) rejectOnException
             case usage of
                 CertificateUsageAccept        -> verifyLeafKeyUsage KeyUsage_digitalSignature certs
                 CertificateUsageReject reason -> certificateRejected reason
@@ -502,7 +503,7 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
                 -- the signature is wrong.  In either case,
                 -- ask the application if it wants to
                 -- proceed, we will do that.
-                res <- liftIO $ onUnverifiedClientCert (serverHooks sparams)
+                res <- onUnverifiedClientCert (serverHooks sparams)
                 if res then do
                         -- When verification fails, but the
                         -- application callbacks accepts, we
@@ -544,7 +545,7 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
                 Just cc | isNullCertificateChain cc -> throwCore throwerror
                         | otherwise                 -> return cc
 
-hashAndSignaturesInCommon :: Context -> [ExtensionRaw] -> [HashAndSignatureAlgorithm]
+hashAndSignaturesInCommon :: Context m -> [ExtensionRaw] -> [HashAndSignatureAlgorithm]
 hashAndSignaturesInCommon ctx exts =
     let cHashSigs = case extensionLookup extensionID_SignatureAlgorithms exts >>= extensionDecode False of
             -- See Section 7.4.1.4.1 of RFC 5246.
@@ -559,7 +560,7 @@ hashAndSignaturesInCommon ctx exts =
         -- to server preference in 'supportedHashSignatures'.
      in sHashSigs `intersect` cHashSigs
 
-negotiatedGroupsInCommon :: Context -> [ExtensionRaw] -> [Group]
+negotiatedGroupsInCommon :: Context m -> [ExtensionRaw] -> [Group]
 negotiatedGroupsInCommon ctx exts = case extensionLookup extensionID_NegotiatedGroups exts >>= extensionDecode False of
     Just (NegotiatedGroups clientGroups) ->
         let serverGroups = supportedGroups (ctxSupported ctx)
@@ -608,7 +609,7 @@ findHighestVersionFrom clientVersion allowedVersions =
 -- subset of this list named 'sigCreds'.  This list has been filtered in order
 -- to remove certificates that are not compatible with hash/signature
 -- restrictions (TLS 1.2).
-getCiphers :: ServerParams -> Credentials -> Credentials -> [Cipher]
+getCiphers :: ServerParams m -> Credentials -> Credentials -> [Cipher]
 getCiphers sparams creds sigCreds = filter authorizedCKE (supportedCiphers $ serverSupported sparams)
       where authorizedCKE cipher =
                 case cipherKeyExchange cipher of

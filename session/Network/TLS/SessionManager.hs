@@ -57,7 +57,7 @@ data Availability = Fresh | Used
 ----------------------------------------------------------------
 
 -- | Creating an in-memory session manager.
-newSessionManager :: Config -> IO SessionManager
+newSessionManager :: Config -> IO (SessionManager IO)
 newSessionManager conf = do
     let lifetime = fromIntegral $ ticketLifetime conf
         maxsiz = dbMaxSize conf

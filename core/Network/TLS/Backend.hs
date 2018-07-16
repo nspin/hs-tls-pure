@@ -1,4 +1,7 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 -- |
 -- Module      : Network.TLS.Backend
 -- License     : BSD-style
@@ -36,18 +39,18 @@ import qualified Hans.NetworkStack as Hans
 #endif
 
 -- | Connection IO backend
-data Backend = Backend
-    { backendFlush :: IO ()                -- ^ Flush the connection sending buffer, if any.
-    , backendClose :: IO ()                -- ^ Close the connection.
-    , backendSend  :: ByteString -> IO ()  -- ^ Send a bytestring through the connection.
-    , backendRecv  :: Int -> IO ByteString -- ^ Receive specified number of bytes from the connection.
+data Backend m = Backend
+    { backendFlush :: m ()                -- ^ Flush the connection sending buffer, if any.
+    , backendClose :: m ()                -- ^ Close the connection.
+    , backendSend  :: ByteString -> m ()  -- ^ Send a bytestring through the connection.
+    , backendRecv  :: Int -> m ByteString -- ^ Receive specified number of bytes from the connection.
     }
 
-class HasBackend a where
-    initializeBackend :: a -> IO ()
-    getBackend :: a -> Backend
+class HasBackend m a | a -> m where
+    initializeBackend :: a -> m ()
+    getBackend :: a -> Backend m
 
-instance HasBackend Backend where
+instance Monad m => HasBackend m (Backend m) where
     initializeBackend _ = return ()
     getBackend = id
 
@@ -69,7 +72,7 @@ safeRecv s buf = do
 #endif
 
 #ifdef INCLUDE_NETWORK
-instance HasBackend Network.Socket where
+instance HasBackend IO Network.Socket where
     initializeBackend _ = return ()
     getBackend sock = Backend (return ()) (Network.close sock) (Network.sendAll sock) recvAll
       where recvAll n = B.concat <$> loop n
@@ -82,7 +85,7 @@ instance HasBackend Network.Socket where
 #endif
 
 #ifdef INCLUDE_HANS
-instance HasBackend Hans.Socket where
+instance HasBackend IO Hans.Socket where
     initializeBackend _ = return ()
     getBackend sock = Backend (return ()) (Hans.close sock) sendAll recvAll
       where sendAll x = do
@@ -99,6 +102,6 @@ instance HasBackend Hans.Socket where
                    else loop (left - L.length r) (acc `L.append` r)
 #endif
 
-instance HasBackend Handle where
+instance HasBackend IO Handle where
     initializeBackend handle = hSetBuffering handle NoBuffering
     getBackend handle = Backend (hFlush handle) (hClose handle) (B.hPut handle) (B.hGet handle)

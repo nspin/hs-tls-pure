@@ -96,7 +96,6 @@ module Network.TLS
     -- * High level API
     , sendData
     , recvData
-    , recvData'
 
     -- * Crypto Key
     , PubKey(..)
