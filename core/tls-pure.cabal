@@ -47,6 +47,7 @@ Library
                    , bytestring
                    , data-default-class
                    , exceptions
+                   , lens
                    -- crypto related
                    , memory >= 0.14.6
                    , cryptonite >= 0.25
@@ -64,6 +65,7 @@ Library
     Build-Depends:   hans
     cpp-options:     -DINCLUDE_HANS
   Exposed-modules:   Network.TLS
+                     Network.TLS.Pure
                      Network.TLS.Cipher
                      Network.TLS.Compression
                      Network.TLS.Internal
