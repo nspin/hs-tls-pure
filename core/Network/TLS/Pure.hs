@@ -41,12 +41,12 @@ data TLSMutState = TLSMutState
 
 makeLenses ''TLSMutState
 
--- | Ignores 'DebugParams', because a seed is specified anyways.
+-- | Ignores 'DebugParams' because a seed must be specified anyways.
 contextNewPure :: forall m params. (Monad m, TLSParams (StateT TLSMutState m) params)
                => Seed
                -> Backend (StateT TLSMutState m)
                -> params
-               -> Hooks (StateT TLSMutState m)
+               -> (Context (StateT TLSMutState m) -> Hooks (StateT TLSMutState m))
                -> (TLSMutState, Context (StateT TLSMutState m))
 contextNewPure seed backend params hooks = (st, ctx)
   where
@@ -87,7 +87,7 @@ contextNewPure seed backend params hooks = (st, ctx)
         , ctxEstablished_     = mkRef tlsMutEstablished_
         , ctxSSLv2ClientHello = mkRef tlsMutSSLv2ClientHello
         , ctxNeedEmptyPacket_ = mkRef tlsMutNeedEmptyPacket_
-        , ctxHooks            = (return hooks, error "hooks immutable") -- TODO
+        , ctxHooks            = (return (hooks ctx), error "hooks immutable") -- TODO
         , ctxLockWrite        = id
         , ctxLockRead         = id
         , ctxLockState        = id

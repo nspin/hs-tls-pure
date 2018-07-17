@@ -14,6 +14,8 @@ module Network.TLS.Internal
     , module Network.TLS.Wire
     , sendPacket
     , recvPacket
+    , HandshakeState(..)
+    , getHState
     ) where
 
 import Network.TLS.Struct
@@ -22,3 +24,5 @@ import Network.TLS.Receiving
 import Network.TLS.Sending
 import Network.TLS.Wire
 import Network.TLS.Core (sendPacket, recvPacket)
+import Network.TLS.Handshake.State (HandshakeState(..))
+import Network.TLS.Context.Internal (getHState)
