@@ -15,13 +15,13 @@ module Network.TLS.SessionManager (
 
 import Control.Exception (assert)
 import Control.Reaper
+import Data.Int (Int64)
 import Data.IORef
+import Data.List (foldl')
 import Data.OrdPSQ (OrdPSQ)
 import qualified Data.OrdPSQ as Q
 import Network.TLS (SessionID, SessionData, SessionManager(..))
 import qualified System.Clock as C
-
-import Network.TLS.Imports
 
 ----------------------------------------------------------------
 
