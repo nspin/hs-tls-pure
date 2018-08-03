@@ -42,7 +42,7 @@ processPacket ctx (Record ProtocolType_ChangeCipherSpec _ fragment) =
                        return $ Right ChangeCipherSpec
 
 processPacket ctx (Record ProtocolType_Handshake ver fragment) = do
-    keyxchg <- getHState ctx >>= \hs -> return (hs >>= hstPendingCipher >>= Just . cipherKeyExchange)
+    keyxchg <- getHState ctx <&> (>>= (hstPendingCipher >=> Just . cipherKeyExchange))
     usingState ctx $ do
         let currentParams = CurrentParams
                             { cParamsVersion     = ver
@@ -72,4 +72,4 @@ processPacket _ (Record ProtocolType_DeprecatedHandshake _ fragment) =
 switchRxEncryption :: MonadThrow m => Context m -> m ()
 switchRxEncryption ctx =
     usingHState ctx (gets hstPendingRxState) >>= \rx ->
-    ctxRxState ctx (\_ -> return ((), fromJust "rx-state" rx))
+    ctxRxState ctx . put $ fromJust "rx-state" rx

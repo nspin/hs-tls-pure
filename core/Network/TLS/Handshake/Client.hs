@@ -345,7 +345,7 @@ onServerHello _ _ _ p = unexpected (show p) (Just "server hello")
 processCertificate :: (MonadThrow m, MonadCatch m) => ClientParams m -> Context m -> Handshake -> m (RecvState m)
 processCertificate cparams ctx (Certificates certs) = do
     -- run certificate recv hook
-    ctxWithHooks ctx (\hooks -> hookRecvCertificates hooks certs)
+    hookRecvCertificates (ctxHooks ctx) certs
     -- then run certificate validation
     usage <- catchException (wrapCertificateChecks <$> checkCert) rejectOnException
     case usage of

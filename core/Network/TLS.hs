@@ -61,10 +61,6 @@ module Network.TLS
 #endif
     , contextFlush
     , contextClose
-    , contextHookSetHandshakeRecv
-    , contextHookSetCertificateRecv
-    , contextHookSetLogging
-    , contextModifyHooks
 
     -- * Information gathering
     , Information(..)

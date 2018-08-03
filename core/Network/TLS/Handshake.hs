@@ -30,12 +30,12 @@ import Control.Exception (IOException)
 -- | Handshake for a new TLS connection
 -- This is to be called at the beginning of a connection, and during renegotiation
 handshake :: MonadCatch m => Context m -> m ()
-handshake ctx = handleException ctx $ withRWLock ctx (ctxDoHandshake ctx ctx)
+handshake ctx = handleException ctx $ withRWLock ctx (ctxDoHandshake ctx)
 
 -- Handshake when requested by the remote end
 -- This is called automatically by 'recvData'
 handshakeWith :: MonadCatch m => Context m -> Handshake -> m ()
-handshakeWith ctx hs = handleException ctx $ withRWLock ctx $ ctxDoHandshakeWith ctx ctx hs
+handshakeWith ctx hs = handleException ctx $ withRWLock ctx $ ctxDoHandshakeWith ctx hs
 
 handleException :: (MonadThrow m, MonadCatch m) => Context m -> m () -> m ()
 handleException ctx f = catchException f $ \exception -> do

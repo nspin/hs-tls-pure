@@ -61,18 +61,14 @@ handshakeTerminate ctx = do
             sessionEstablish (sharedSessionManager $ ctxShared ctx) sessionId (fromJust "session-data" sessionData)
         _ -> return ()
     -- forget most handshake data and reset bytes counters.
-    ctxHandshake ctx $ \mhshake ->
-        (,) () <$> case mhshake of
-            Nothing -> return Nothing
-            Just hshake ->
-                return $ Just (newEmptyHandshake (hstClientVersion hshake) (hstClientRandom hshake))
-                    { hstServerRandom = hstServerRandom hshake
-                    , hstMasterSecret = hstMasterSecret hshake
-                    }
+    let f hshake = (newEmptyHandshake (hstClientVersion hshake) (hstClientRandom hshake))
+            { hstServerRandom = hstServerRandom hshake
+            , hstMasterSecret = hstMasterSecret hshake
+            }
+    usingHState ctx (modify f)
     updateMeasure ctx resetBytesCounters
     -- mark the secure connection up and running.
     setEstablished ctx True
-    return ()
 
 sendChangeCipherAndFinish :: MonadThrow m
                           => Context m
@@ -124,7 +120,7 @@ getSessionData ctx = do
     ver <- usingState_ ctx getVersion
     sni <- usingState_ ctx getClientSNI
     mms <- usingHState ctx (gets hstMasterSecret)
-    tx  <- readMMVar (ctxTxState ctx)
+    tx  <- ctxTxState ctx get
     case mms of
         Nothing -> return Nothing
         Just ms -> return $ Just SessionData

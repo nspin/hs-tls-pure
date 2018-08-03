@@ -67,7 +67,7 @@ writePacket ctx pkt = do
 prepareRecord :: MonadThrow m => Context m -> RecordM a -> m (Either TLSError a)
 prepareRecord ctx f = do
     ver     <- usingState_ ctx (getVersionWithDefault $ maximum $ supportedVersions $ ctxSupported ctx)
-    txState <- readMMVar $ ctxTxState ctx
+    txState <- ctxTxState ctx get
     let sz = case stCipher txState of
                   Nothing     -> 0
                   Just cipher -> if hasRecordIV $ bulkF $ cipherBulk cipher
@@ -84,7 +84,7 @@ switchTxEncryption ctx = do
     (ver, cc) <- usingState_ ctx $ do v <- getVersion
                                       c <- isClientContext
                                       return (v, c)
-    ctxTxState ctx (\_ -> return ((), tx))
+    ctxTxState ctx $ put tx
     -- set empty packet counter measure if condition are met
     when (ver <= TLS10 && cc == ClientRole && isCBC tx && supportedEmptyPacket (ctxSupported ctx)) $ setNeedEmptyPacket ctx True
   where isCBC tx = maybe False (\c -> bulkBlockSize (cipherBulk c) > 0) (stCipher tx)

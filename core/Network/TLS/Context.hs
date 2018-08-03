@@ -24,8 +24,6 @@ module Network.TLS.Context
     , ctxDisableSSLv2ClientHello
     , ctxEstablished
     , withLog
-    , ctxWithHooks
-    , contextModifyHooks
     , setEOF
     , setEstablished
     , contextFlush
@@ -36,7 +34,6 @@ module Network.TLS.Context
     , withMeasure
     , withReadLock
     , withWriteLock
-    , withStateLock
     , withRWLock
 
     -- * information
@@ -50,11 +47,6 @@ module Network.TLS.Context
 #ifdef INCLUDE_NETWORK
     , contextNewOnSocket
 #endif
-
-    -- * Context hooks
-    , contextHookSetHandshakeRecv
-    , contextHookSetCertificateRecv
-    , contextHookSetLogging
 
     -- * Using context states
     , throwCore
@@ -82,6 +74,8 @@ import Network.TLS.RNG
 
 import Control.Concurrent.MVar
 import Control.Monad.Catch (MonadCatch)
+import Control.Monad.State.Strict (runState)
+import Control.Monad.Except
 import Data.IORef
 import Data.Tuple
 
@@ -143,36 +137,46 @@ contextNew backend params = do
     -- server context, where we might be dealing with an old/compat client.
     sslv2Compat <- newIORef (role == ServerRole)
     needEmptyPacket <- newIORef False
-    hooks <- newIORef defaultHooks
     tx    <- newMVar newRecordState
     rx    <- newMVar newRecordState
     hs    <- newMVar Nothing
     lockWrite <- newMVar ()
     lockRead  <- newMVar ()
-    lockState <- newMVar ()
 
     let fromMVar v f = modifyMVar v $ fmap swap . f
+        fromPVar v m = modifyMVar v $ \vv -> return (swap (runState m vv))
+        fromIORef r m = do
+            s <- readIORef r
+            let (a, s') = runState m s
+            writeIORef r s'
+            return a
 
-    return Context
+        ctx = Context
             { ctxConnection   = getBackend backend
             , ctxShared       = shared
             , ctxSupported    = supported
-            , ctxState        = fromMVar stvar
-            , ctxTxState      = fromMVar tx
-            , ctxRxState      = fromMVar rx
-            , ctxHandshake    = fromMVar hs
-            , ctxDoHandshake  = doHandshake params
-            , ctxDoHandshakeWith  = doHandshakeWith params
-            , ctxMeasurement  = (readIORef stats, writeIORef stats)
-            , ctxEOF_         = (readIORef eof, writeIORef eof)
-            , ctxEstablished_ = (readIORef established, writeIORef established)
-            , ctxSSLv2ClientHello = (readIORef sslv2Compat, writeIORef sslv2Compat)
-            , ctxNeedEmptyPacket_ = (readIORef needEmptyPacket, writeIORef needEmptyPacket)
-            , ctxHooks            = (readIORef hooks, writeIORef hooks)
-            , ctxLockWrite        = withMVar lockWrite . const
-            , ctxLockRead         = withMVar lockRead . const
-            , ctxLockState        = withMVar lockState . const
+            , ctxState        = \m -> ExceptT $ do
+                st <- takeMVar stvar
+                let (r, st') = runTLSState m st
+                putMVar stvar st'
+                return r
+
+            , ctxTxState      = fromPVar tx
+            , ctxRxState      = fromPVar rx
+            , ctxHandshake    = fromPVar hs
+            , ctxDoHandshake  = doHandshake params ctx
+            , ctxDoHandshakeWith  = doHandshakeWith params ctx
+            , ctxMeasurement  = fromIORef stats
+            , ctxEOF_         = fromIORef eof
+            , ctxEstablished_ = fromIORef established
+            , ctxSSLv2ClientHello = fromIORef sslv2Compat
+            , ctxNeedEmptyPacket_ = fromIORef needEmptyPacket
+            , ctxHooks            = defaultHooks
+            , withWriteLock        = withMVar lockWrite . const
+            , withReadLock         = withMVar lockRead . const
             }
+
+    return ctx
 
 -- | create a new context on an handle.
 contextNewOnHandle :: TLSParams IO params
@@ -191,15 +195,3 @@ contextNewOnSocket :: TLSParams IO params
 contextNewOnSocket sock params = contextNew sock params
 {-# DEPRECATED contextNewOnSocket "use contextNew" #-}
 #endif
-
-contextHookSetHandshakeRecv :: Monad m => Context m -> (Handshake -> m Handshake) -> m ()
-contextHookSetHandshakeRecv context f =
-    contextModifyHooks context (\hooks -> hooks { hookRecvHandshake = f })
-
-contextHookSetCertificateRecv :: Monad m => Context m -> (CertificateChain -> m ()) -> m ()
-contextHookSetCertificateRecv context f =
-    contextModifyHooks context (\hooks -> hooks { hookRecvCertificates = f })
-
-contextHookSetLogging :: Monad m => Context m -> Logging m -> m ()
-contextHookSetLogging context loggingCallbacks =
-    contextModifyHooks context (\hooks -> hooks { hookLogging = loggingCallbacks })

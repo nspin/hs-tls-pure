@@ -29,6 +29,8 @@ module Network.TLS.Imports
 #if !MIN_VERSION_base(4,8,0)
     , sortOn
 #endif
+    , module Data.Functor
+    , module Control.Monad.State.Strict
     -- project definition
     , showBytesHex
     ) where
@@ -51,6 +53,9 @@ import Data.Word
 
 import Data.ByteArray.Encoding as B
 import qualified Prelude as P
+
+import Data.Functor
+import Control.Monad.State.Strict (State, state, modify, put, get, gets)
 
 #if !MIN_VERSION_base(4,8,0)
 import Prelude ((.))

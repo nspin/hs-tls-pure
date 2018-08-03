@@ -14,7 +14,7 @@ module Network.TLS.Handshake.Process
     ) where
 
 import Control.Monad.Catch (MonadThrow)
-import Control.Monad.State.Strict (gets)
+import Control.Monad.State.Strict (gets, put, runState)
 
 import Network.TLS.Types (Role(..), invertRole)
 import Network.TLS.Util
@@ -123,6 +123,4 @@ processClientFinished ctx fdata = do
 
 -- initialize a new Handshake context (initial handshake or renegotiations)
 startHandshake :: Monad m => Context m -> Version -> ClientRandom -> m ()
-startHandshake ctx ver crand =
-    let hs = Just $ newEmptyHandshake ver crand
-    in void $ swapMMVar (ctxHandshake ctx) hs
+startHandshake ctx ver crand = ctxHandshake ctx . put $ Just (newEmptyHandshake ver crand)

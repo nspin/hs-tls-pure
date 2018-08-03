@@ -100,8 +100,7 @@ recvPacket ctx = do
             pktRecv <- processPacket ctx record
             pkt <- case pktRecv of
                     Right (Handshake hss) ->
-                        ctxWithHooks ctx $ \hooks ->
-                            Right . Handshake <$> mapM (hookRecvHandshake hooks) hss
+                            Right . Handshake <$> mapM (hookRecvHandshake (ctxHooks ctx)) hss
                     _                     -> return pktRecv
             case pkt of
                 Right p -> withLog ctx $ \logging -> loggingPacketRecv logging $ show p

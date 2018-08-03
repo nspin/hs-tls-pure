@@ -449,7 +449,7 @@ recvClientData :: (MonadThrow m, MonadCatch m) => ServerParams m -> Context m ->
 recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientCertificate)
   where processClientCertificate (Certificates certs) = do
             -- run certificate recv hook
-            ctxWithHooks ctx (\hooks -> hookRecvCertificates hooks certs)
+            hookRecvCertificates (ctxHooks ctx) certs
             -- Call application callback to see whether the
             -- certificate chain is acceptable.
             --

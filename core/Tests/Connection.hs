@@ -217,8 +217,8 @@ newPairContext pipe (cParams, sParams) = do
     cCtx' <- contextNew cBackend cParams
     sCtx' <- contextNew sBackend sParams
 
-    contextHookSetLogging cCtx' (logging "client: ")
-    contextHookSetLogging sCtx' (logging "server: ")
+    -- contextHookSetLogging cCtx' (logging "client: ")
+    -- contextHookSetLogging sCtx' (logging "server: ")
 
     return (cCtx', sCtx')
   where

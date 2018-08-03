@@ -75,7 +75,7 @@ sendData ctx dataToSend = checkValid ctx >> mapM_ sendDataChunk (L.toChunks data
                 let (sending, remain) = B.splitAt 16384 d
                 sendPacket ctx $ AppData sending
                 sendDataChunk remain
-            | otherwise = sendPacket ctx $ AppData d
+            | otherwise = withWriteLock ctx . sendPacket ctx $ AppData d
 
 -- | recvData get data out of Data packet, and automatically renegotiate if
 -- a Handshake ClientHello is received
