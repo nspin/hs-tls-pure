@@ -32,18 +32,6 @@ checkValid ctx = do
     eofed <- ctxEOF ctx
     when eofed $ throwM $ mkIOError eofErrorType "data" Nothing Nothing
 
-readExact :: Monad m => Context m -> Int -> m (Either TLSError ByteString)
-readExact ctx sz = do
-    hdrbs <- contextRecv ctx sz
-    if B.length hdrbs == sz
-        then return $ Right hdrbs
-        else do
-            setEOF ctx
-            return . Left $
-                if B.null hdrbs
-                    then Error_EOF
-                    else Error_Packet ("partial packet: expecting " ++ show sz ++ " bytes, got: " ++ show (B.length hdrbs))
-
 
 -- | recvRecord receive a full TLS record (header + data), from the other side.
 --

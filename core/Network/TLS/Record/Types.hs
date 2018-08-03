@@ -26,6 +26,9 @@ module Network.TLS.Record.Types
     , Plaintext
     , Compressed
     , Ciphertext
+    -- * inspect record
+    , recordType
+    , recordLength
     -- * manipulate record
     , onRecordFragment
     , fragmentCompress
@@ -91,3 +94,9 @@ rawToRecord (Header pt ver _) fragment = Record pt ver fragment
 -- | turn a record into a header
 recordToHeader :: Record a -> Header
 recordToHeader (Record pt ver (Fragment bytes)) = Header pt ver (fromIntegral $ B.length bytes)
+
+recordLength :: Record a -> Int
+recordLength (Record _ _ (Fragment bytes)) = B.length bytes
+
+recordType :: Record a -> ProtocolType
+recordType (Record pt _ _) = pt

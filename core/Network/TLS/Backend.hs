@@ -14,17 +14,19 @@
 -- ways to initialize a new context.
 --
 -- Typically, a backend provides:
--- * a way to read data
--- * a way to write data
+-- * a way to read records
+-- * a way to write records
 -- * a way to close the stream
 -- * a way to flush the stream
 --
 module Network.TLS.Backend
     ( HasBackend(..)
     , Backend(..)
+    , backendFromRead
     ) where
 
 import Network.TLS.Imports
+import Network.TLS.Record
 import qualified Data.ByteString as B
 import System.IO (Handle, hSetBuffering, BufferMode(..), hFlush, hClose)
 
@@ -42,8 +44,8 @@ import qualified Hans.NetworkStack as Hans
 data Backend m = Backend
     { backendFlush :: m ()                -- ^ Flush the connection sending buffer, if any.
     , backendClose :: m ()                -- ^ Close the connection.
-    , backendSend  :: ByteString -> m ()  -- ^ Send a bytestring through the connection.
-    , backendRecv  :: Int -> m ByteString -- ^ Receive specified number of bytes from the connection.
+    , backendSend  :: Record Ciphertext -> m () -- ^ Send a record through the connection.
+    , backendRecv  :: m (Record Ciphertext)     -- ^ Receive record from the connection.
     }
 
 class HasBackend m a | a -> m where
@@ -74,7 +76,7 @@ safeRecv s buf = do
 #ifdef INCLUDE_NETWORK
 instance HasBackend IO Network.Socket where
     initializeBackend _ = return ()
-    getBackend sock = Backend (return ()) (Network.close sock) (Network.sendAll sock) recvAll
+    getBackend sock = backendFromRead (return ()) (Network.close sock) (Network.sendAll sock) recvAll
       where recvAll n = B.concat <$> loop n
               where loop 0    = return []
                     loop left = do
@@ -87,7 +89,7 @@ instance HasBackend IO Network.Socket where
 #ifdef INCLUDE_HANS
 instance HasBackend IO Hans.Socket where
     initializeBackend _ = return ()
-    getBackend sock = Backend (return ()) (Hans.close sock) sendAll recvAll
+    getBackend sock = backendFromRead (return ()) (Hans.close sock) sendAll recvAll
       where sendAll x = do
               amt <- fromIntegral <$> Hans.sendBytes sock (L.fromStrict x)
               if (amt == 0) || (amt == B.length x)
@@ -104,4 +106,11 @@ instance HasBackend IO Hans.Socket where
 
 instance HasBackend IO Handle where
     initializeBackend handle = hSetBuffering handle NoBuffering
-    getBackend handle = Backend (hFlush handle) (hClose handle) (B.hPut handle) (B.hGet handle)
+    getBackend handle = backendFromRead (hFlush handle) (hClose handle) (B.hPut handle) (B.hGet handle)
+
+
+backendFromRead :: m () -> m () -> (ByteString -> m ()) -> (Int -> m ByteString) -> Backend m
+backendFromRead close flush send recv = Backend close flush send' recv'
+  where
+    send' rec = undefined
+    recv' = undefined

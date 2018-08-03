@@ -21,6 +21,8 @@ module Network.TLS.Record
     , recordToRaw
     , rawToRecord
     , recordToHeader
+    , recordType
+    , recordLength
     , Plaintext
     , Compressed
     , Ciphertext

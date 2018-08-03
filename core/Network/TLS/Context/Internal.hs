@@ -69,11 +69,10 @@ import Network.TLS.Compression (Compression)
 import Network.TLS.State
 import Network.TLS.Handshake.State
 import Network.TLS.Hooks
-import Network.TLS.Record.State
+import Network.TLS.Record
 import Network.TLS.Parameters
 import Network.TLS.Measurement
 import Network.TLS.Imports
-import qualified Data.ByteString as B
 
 import Control.Monad.Catch (throwM, Exception(), MonadThrow)
 import Control.Monad.State.Strict (gets)
@@ -165,11 +164,16 @@ contextGetInformation ctx = do
         (Just v, Just c) -> return $ Just $ Information v c comp ms cr sr
         _                -> return Nothing
 
-contextSend :: Monad m => Context m -> ByteString -> m ()
-contextSend c b = updateMeasure c (addBytesSent $ B.length b) >> (backendSend $ ctxConnection c) b
+contextSend :: Monad m => Context m -> Record Ciphertext -> m ()
+contextSend c rec = do
+    updateMeasure c . addBytesSent $ recordLength rec
+    backendSend (ctxConnection c) rec
 
-contextRecv :: Monad m => Context m -> Int -> m ByteString
-contextRecv c sz = updateMeasure c (addBytesReceived sz) >> (backendRecv $ ctxConnection c) sz
+contextRecv :: Monad m => Context m -> m (Record Ciphertext)
+contextRecv c = do
+    rec <- backendRecv $ ctxConnection c
+    updateMeasure c . addBytesReceived $ recordLength rec
+    return rec
 
 ctxEOF :: Context m -> m Bool
 ctxEOF = readMRef . ctxEOF_
